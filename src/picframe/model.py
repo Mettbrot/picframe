@@ -1,3 +1,4 @@
+import threading
 import yaml
 import os
 import time
@@ -181,6 +182,8 @@ class Model:
         self.__file_index = 0  # pointer to next position in __file_list
         self.__current_pics = (None, None)  # this hold a tuple of (pic, None) or two pic objects if portrait pairs
         self.__num_run_through = 0
+        self.__cache_dir_thread = None
+        self.__cache_dir_thread_stop = False
 
         model_config = self.get_model_config()  # alias for brevity as used several times below
         try:
@@ -402,9 +405,13 @@ class Model:
                 pic2 = Pic(**pic_row) if pic_row is not None else None
 
             if self.cache_dir_set_and_valid():
-                pic1.fname = os.path.join(self.__config['model']['pic_cache_dir'], os.path.basename(pic1.fname))
+                cached_pic1 = self.build_cached_filename(pic1.fname)
+                if os.path.isfile(cached_pic1):
+                    pic1.fname = cached_pic1
                 if pic2:
-                    pic2.fname = os.path.join(self.__config['model']['pic_cache_dir'], os.path.basename(pic2.fname))
+                    cached_pic2 = self.build_cached_filename(pic2.fname)
+                    if os.path.isfile(cached_pic2):
+                        pic2.fname = cached_pic2
             # Verify the images in the selected image set actually exist on disk
             # Blank out missing references and swap positions if necessary to try and get
             # a valid image in the first slot.
@@ -439,7 +446,10 @@ class Model:
         return self.__current_pics
     
     def cache_dir_set_and_valid(self):
-        return self.__config['model']['pic_cache_dir'] != "" and os.path.isdir(self.__config['model']['pic_cache_dir']);
+        return self.__config['model']['pic_cache_dir'] != "" and os.path.isdir(self.__config['model']['pic_cache_dir'])
+
+    def build_cached_filename(self, filename):
+        return os.path.join(self.__config['model']['pic_cache_dir'], os.path.basename(filename))
 
     def delete_file(self):
         # delete the current pic. If it's a portrait pair then only the left one will be deleted
@@ -491,14 +501,14 @@ class Model:
         sort_clause = ",".join(sort_list)
 
         new_image_list = self.__image_cache.query_cache(where_clause, sort_clause)
-        if self.cache_dir_set_and_valid() and self.__file_list != new_image_list:
-            self.clear_cache_dir()
-            for index in range(len(new_image_list)):
-                file_ids = new_image_list[index]
-                pic_row = self.__image_cache.get_file_info(file_ids[0])
-                pic = Pic(**pic_row) if pic_row is not None else None
-                if pic is not None:
-                    shutil.copy(pic.fname, self.__config['model']['pic_cache_dir'])
+        if self.cache_dir_set_and_valid():
+            if self.__cache_dir_thread is not None:
+                self.__cache_dir_thread_stop = True
+                self.__cache_dir_thread.join()
+            self.__cache_dir_thread = threading.Thread(target=self.fill_cache_dir, args=(self, new_image_list))
+            self.__cache_dir_thread_stop = False
+            self.__cache_dir_thread.start()
+            #self.clear_cache_dir()
         self.__file_list = new_image_list
         self.__number_of_files = len(self.__file_list)
         self.__file_index = 0
@@ -516,3 +526,13 @@ class Model:
                         shutil.rmtree(file_path)
                 except Exception as e:
                     print('Failed to delete %s. Reason: %s' % (file_path, e))
+
+    def fill_cache_dir(first, self, file_list):
+        for index in range(len(file_list)):
+            if self.__cache_dir_thread_stop:
+                return
+            file_ids = file_list[index]
+            pic_row = self.__image_cache.get_file_info(file_ids[0])
+            pic = Pic(**pic_row) if pic_row is not None else None
+            if pic is not None and not os.path.isfile(self.build_cached_filename(pic.fname)):
+                shutil.copy(pic.fname, self.__config['model']['pic_cache_dir'])
