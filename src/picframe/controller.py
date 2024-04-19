@@ -381,6 +381,7 @@ class Controller:
             self.__interface_mqtt.stop()
         if self.__interface_http:
             self.__interface_http.stop()
+        self.__model.stop_cache_thread()
         self.__model.stop_image_chache()  # close db tidily (blocks till closed)
         self.__viewer.slideshow_stop()  # do this last
 
