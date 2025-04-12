@@ -3,6 +3,7 @@ import os
 import time
 import logging
 import locale
+import shutil
 from picframe import geo_reverse, image_cache
 
 DEFAULT_CONFIGFILE = "~/picframe_data/config/configuration.yaml"
@@ -81,6 +82,7 @@ DEFAULT_CONFIG = {
         'portrait_pairs': False,
         'deleted_pictures': '~/DeletedPictures',
         'update_interval': 2.0,
+        'pic_cache_dir': '',
         'log_level': 'WARNING',
         'log_file': '',
         'location_filter': '',
@@ -414,6 +416,10 @@ class Model:
                 pic_row = self.__image_cache.get_file_info(file_ids[1])
                 pic2 = Pic(**pic_row) if pic_row is not None else None
 
+            if self.cache_dir_set_and_valid():
+                pic1.fname = os.path.join(self.__config['model']['pic_cache_dir'], os.path.basename(pic1.fname))
+                if pic2:
+                    pic2.fname = os.path.join(self.__config['model']['pic_cache_dir'], os.path.basename(pic2.fname))
             # Verify the images in the selected image set actually exist on disk
             # Blank out missing references and swap positions if necessary to try and get
             # a valid image in the first slot.
@@ -446,6 +452,9 @@ class Model:
 
     def get_current_pics(self):
         return self.__current_pics
+    
+    def cache_dir_set_and_valid(self):
+        return self.__config['model']['pic_cache_dir'] != "" and os.path.isdir(self.__config['model']['pic_cache_dir']);
 
     def delete_file(self):
         # delete the current pic. If it's a portrait pair then only the left one will be deleted
@@ -496,7 +505,16 @@ class Model:
             sort_list.append("fname ASC")  # always finally sort on this in case nothing else to sort on or sort_cols is "" # noqa: E501
         sort_clause = ",".join(sort_list)
 
-        self.__file_list = self.__image_cache.query_cache(where_clause, sort_clause)
+        new_image_list = self.__image_cache.query_cache(where_clause, sort_clause)
+        if self.cache_dir_set_and_valid() and self.__file_list != new_image_list:
+            self.__clear_cache_dir()
+            for index in range(len(new_image_list)):
+                file_ids = new_image_list[index]
+                pic_row = self.__image_cache.get_file_info(file_ids[0])
+                pic = Pic(**pic_row) if pic_row is not None else None
+                if pic is not None:
+                    shutil.copy(pic.fname, self.__config['model']['pic_cache_dir'])
+        self.__file_list = new_image_list
         self.__number_of_files = len(self.__file_list)
         self.__file_index = 0
         self.__num_run_through = 0
@@ -506,3 +524,15 @@ class Model:
         random_bytes = os.urandom(length // 2)
         random_string = ''.join('{:02x}'.format(ord(chr(byte))) for byte in random_bytes)
         return random_string
+
+    def __clear_cache_dir(self):
+        if self.cache_dir_set_and_valid():
+            for filename in os.listdir(self.__config['model']['pic_cache_dir']):
+                file_path = os.path.join(self.__config['model']['pic_cache_dir'], filename)
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                except Exception as e:
+                    print('Failed to delete %s. Reason: %s' % (file_path, e))
