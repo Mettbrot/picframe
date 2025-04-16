@@ -5,6 +5,12 @@ import time
 import signal
 import sys
 import ssl
+import threading
+import RPi.GPIO as GPIO
+# BCM-numbering
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(14, GPIO.IN)
+GPIO.add_event_detect(14, GPIO.RISING)  # add rising edge detection on a channel
 
 
 def make_date(txt):
@@ -61,6 +67,7 @@ class Controller:
         self.__interface_peripherals = None
         self.__interface_mqtt = None
         self.__interface_http = None
+        self.__timer = None
 
     @property
     def paused(self):
@@ -302,6 +309,7 @@ class Controller:
         signal.signal(signal.SIGINT, self.__signal_handler)
 
         video_extended = False
+        self.__reset_display_blank_countdown();
         while self.keep_looping:
             time_delay = self.__model.time_delay
             fade_time = self.__model.fade_time
@@ -338,6 +346,20 @@ class Controller:
             if video_playing:
                 video_extended = True
             self.__interface_peripherals.check_input()
+
+            if GPIO.event_detected(14) or GPIO.input(14):
+                self.display_is_on = True
+                self.__reset_display_blank_countdown();
+
+    def __reset_display_blank_countdown(self):
+        if self.__timer is not None:
+            self.__timer.cancel()
+            self.__timer = None
+        def turn_display_off():
+            self.__logger.info("Turning display OFF due to no movement captured.")
+            self.display_is_on = False
+        self.__timer = threading.Timer(30.0, turn_display_off)
+        self.__timer.start()
 
     def start(self):
         self.__viewer.slideshow_start()
