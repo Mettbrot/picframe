@@ -5,6 +5,10 @@ import time
 import signal
 import sys
 import ssl
+import sched, time
+import RPi.GPIO as GPIO
+# BCM-numbering
+GPIO.setmode(GPIO.BCM)
 
 
 def make_date(txt):
@@ -61,6 +65,8 @@ class Controller:
         self.__interface_peripherals = None
         self.__interface_mqtt = None
         self.__interface_http = None
+        self.__scheduler = sched.scheduler(time.time, time.sleep)
+        self.__scheduler_event = None
 
     @property
     def paused(self):
@@ -302,7 +308,9 @@ class Controller:
         signal.signal(signal.SIGINT, self.__signal_handler)
 
         video_extended = False
+        self.__reset_display_blank_countdown();
         while self.keep_looping:
+            GPIO.add_event_detect(14, GPIO.RISING)  # add rising edge detection on a channel
             time_delay = self.__model.time_delay
             fade_time = self.__model.fade_time
 
@@ -338,6 +346,18 @@ class Controller:
             if video_playing:
                 video_extended = True
             self.__interface_peripherals.check_input()
+
+            if GPIO.event_detected(14):
+                self.display_is_on(True)
+                self.__reset_display_blank_countdown();
+
+    def __reset_display_blank_countdown(self):
+        if self.__scheduler_event is not None:
+            self.__scheduler.cancel(self.__scheduler_event)
+        self.__scheduler_event = self.__scheduler.enter(60*30, 1, self.display_is_on, (False,))
+        self.__scheduler.run()
+        
+
 
     def start(self):
         self.__viewer.slideshow_start()
