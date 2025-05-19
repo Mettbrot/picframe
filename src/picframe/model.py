@@ -517,6 +517,7 @@ class Model:
         sort_clause = ",".join(sort_list)
 
         new_image_list = self.__image_cache.query_cache(where_clause, sort_clause)
+        self.__logger.debug("got image list of size %d", len(new_image_list))
         if self.cache_dir_set_and_valid():
             if self.__cache_dir_thread is not None:
                 self.__cache_dir_thread_stop = True
@@ -532,6 +533,7 @@ class Model:
         self.__reload_files = False
 
     def stop_cache_thread(self):
+        self.__logger.debug("stopping caching from outside")
         self.__cache_dir_thread_stop = True
 
     def __generate_random_string(self, length):
@@ -552,11 +554,18 @@ class Model:
                     print('Failed to delete %s. Reason: %s' % (file_path, e))
 
     def __fill_cache_dir(first, self, file_list):
+        self.__logger.debug("start caching %d", len(file_list))
         for index in range(len(file_list)):
             if self.__cache_dir_thread_stop:
+                self.__logger.debug("caching stopped")
                 return
             file_ids = file_list[index]
             pic_row = self.__image_cache.get_file_info(file_ids[0])
             pic = Pic(**pic_row) if pic_row is not None else None
             if pic is not None and not os.path.isfile(self.build_cached_filename(pic.fname)):
-                shutil.copyfile(pic.fname, os.path.join(self.__config['model']['pic_cache_dir'], os.path.basename(pic.fname)))
+                self.__logger.debug("caching image %s", pic.fname)
+                try:
+                    shutil.copyfile(pic.fname, os.path.join(self.__config['model']['pic_cache_dir'], os.path.basename(pic.fname)))
+                except Exception as e:
+                    self.__logger.error("Failed to cache image %s. Reason: %s", pic.fname, e)
+        self.__logger.debug("finished caching")
